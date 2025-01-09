@@ -17,3 +17,4 @@ seaborn==0.13.2
 six==1.17.0
 threadpoolctl==3.5.0
 tzdata==2024.2
+dearpygui==2.0.0
