@@ -2,9 +2,13 @@ import dearpygui.dearpygui as dpg
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from AI import load_data, train_model
 
 default_font = "exampes/2_exe/fonts/Comfortaa-Medium.ttf"
+
+drop_table_columns = []
 
 def select_file_for_training_the_model():
     """Открывает диалоговое окно для выбора файла с данными."""
@@ -54,9 +58,24 @@ def update_data_table():
     # Удаляем все предыдущие колонки и строки в таблице "data_table"
     dpg.delete_item("data_table", children_only=True)
 
-    # Создадим словарь для user_data таблицы: 
-    # {column_id: column_name, ...}
     table_col_map = {}
+    global drop_table_columns
+    drop_table_columns = []
+
+    # Создаём строку с кнопками, позволяющими помечать колонки для удаления
+    with dpg.table_row(parent="data_table"):
+        def drop_col_callback(sender):
+            col = dpg.get_item_user_data(sender)
+            if col not in drop_table_columns:
+                drop_table_columns.append(col)
+                add_log(f"Колонка '{col}' будет исключена из обучения.", color=[255, 140, 0], clear=True)
+            else:
+                drop_table_columns.remove(col)
+                add_log(f"Колонка '{col}' будет включена из обучение.", color=[0, 255, 0], clear=True)
+        for col_name in data.columns:
+            drop_checkbox = dpg.add_checkbox(label=f"X", callback=drop_col_callback, user_data=col_name)
+            with dpg.tooltip(drop_checkbox):
+                dpg.add_text("Исключить этот столбец из обучения.")
 
     # Добавляем новые колонки
     for col_name in data.columns:
@@ -77,10 +96,11 @@ def update_data_table():
                 cell_value = data.iloc[row_index][col_name]
                 dpg.add_text(str(cell_value))
 
-    # Теперь сохраним наш словарь в user_data самой таблицы,
-    # чтобы в колбэке знать, какой столбец какой ID имеет.
+    # Сохраняем словарь колонок
     dpg.set_item_user_data("data_table", table_col_map)
-    # Показываем окно с данными
+    
+    dpg.set_value("data_window_title", f"Данные: ({len(data)} строк, {len(data.columns)} столбцов)")
+
     dpg.show_item("data_window")
 
 def _hsv_to_rgb(h, s, v):
@@ -101,9 +121,12 @@ def train_model_callback():
     if data is None:
         add_log("Пожалуйста, загрузите данные.", color=[255, 0, 0])
         return
+    
+    if drop_table_columns:
+        data = data.drop(columns=drop_table_columns)
 
     target_column = dpg.get_value("target_column_combo")
-    if target_column is None or target_column == "":
+    if target_column is None or target_column == "" or target_column in drop_table_columns:
         add_log("Пожалуйста, выберите целевую переменную.", color=[255, 0, 0])
         return
     test_size = dpg.get_value("test_size_slider") / 100.0
@@ -116,11 +139,23 @@ def train_model_callback():
     bootstrap = dpg.get_value("bootstrap_checkbox")
     oob_score = dpg.get_value("oob_score_checkbox")
     n_jobs = int(dpg.get_value("n_jobs_input"))
+    
+    # Разделяем данные
+    X = data.drop(columns=[target_column])
+    X = pd.get_dummies(X)
+    features = X.columns  # Сохраняем список признаков
+    y = data[target_column]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+
 
     results = train_model(
-        data,
-        target_column,
-        test_size,
+        # data,
+        # target_column,
+        # test_size,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
         n_estimators,
         criterion,
         max_depth,
@@ -138,15 +173,54 @@ def train_model_callback():
 
     # Визуализация важности признаков
     feature_importances = results['feature_importances']
-    features = pd.get_dummies(data.drop(columns=[target_column])).columns
     fi_df = pd.DataFrame({'Признак': features, 'Важность': feature_importances})
     fi_df = fi_df.sort_values(by='Важность', ascending=False)
+    
+    def show_feature_importances(fi_df: pd.DataFrame):
+        """Отображение важности признаков во всплывающем окне."""
+        if dpg.does_item_exist("feature_importance_window"):
+            dpg.delete_item("feature_importance_window")
+        with dpg.window(label="Важность признаков", modal=False, tag="feature_importance_window", width=400, height=300):
+            # dpg.add_text("Топ-5 важных признаков:")
+            for i, row in fi_df.iterrows():
+                dpg.add_text(f"{i+1}. {row['Признак']}: {row['Важность']:.4f}")
+            dpg.add_button(label="Закрыть", callback=lambda: dpg.delete_item("feature_importance_window"))
 
-    plt.figure(figsize=(10, 6))
-    sns.barplot(x='Важность', y='Признак', data=fi_df)
-    plt.title('Важность признаков')
-    plt.tight_layout()
-    plt.show()
+    show_feature_importances(fi_df)
+
+    def show_classification_report(clf: RandomForestClassifier, X_test, y_test, target_names):
+        from sklearn.metrics import classification_report, confusion_matrix
+
+        y_pred = clf.predict(X_test)
+
+        # Определяем общий набор меток (чтобы исключить расхождения)
+        labels = sorted(list(set(y_test.unique()) & set(y_pred)))
+        # Преобразуем в строки, если нужно
+        labels_str = [str(label) for label in labels]
+
+        # Генерация отчета, указывая корректные метки
+        report = classification_report(y_test, y_pred, labels=labels, target_names=labels_str, output_dict=True)
+
+        conf_matrix = confusion_matrix(y_test, y_pred, labels=labels)
+
+        if dpg.does_item_exist("evaluation_window"):
+            dpg.delete_item("evaluation_window")
+        with dpg.window(label="Оценка модели", modal=False, tag="evaluation_window", width=500, height=400):
+            dpg.add_text("Отчет о классификации:")
+            for label, metrics in report.items():
+                if label in labels_str:
+                    dpg.add_text(f"{label}:")
+                    dpg.add_text(f"  Precision: {metrics['precision']:.2f}")
+                    dpg.add_text(f"  Recall: {metrics['recall']:.2f}")
+                    dpg.add_text(f"  F1-score: {metrics['f1-score']:.2f}")
+
+            dpg.add_text("\nМатрица ошибок:")
+            for i, row in enumerate(conf_matrix):
+                dpg.add_text(f"Класс {labels_str[i]}: {row.tolist()}")
+
+            dpg.add_button(label="Закрыть", callback=lambda: dpg.delete_item("evaluation_window"))
+    
+    show_classification_report(results['model'], X_test, y_test, target_names=data[target_column].unique())
 
 def add_log(message, color=[0, 0, 0], clear=True):
     if clear:
@@ -177,7 +251,7 @@ with dpg.window(label="Random Forest Classifier", tag="Main Window"):
     dpg.add_separator()
     
     with dpg.child_window(height=300, horizontal_scrollbar=True, tag="data_window", show=False):
-        dpg.add_text("Данные:")
+        dpg.add_text("Данные:", tag="data_window_title")
         with dpg.table(
             tag="data_table", header_row=True, no_host_extendX=True, delay_search=True, borders_innerH=True,
             borders_outerH=True, borders_innerV=True, borders_outerV=True, context_menu_in_body=True,

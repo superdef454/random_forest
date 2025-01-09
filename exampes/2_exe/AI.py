@@ -12,16 +12,33 @@ def load_data(file_path) -> pd.DataFrame:
     return data
 
 
-def train_model(data: pd.DataFrame, target_column, test_size, n_estimators, criterion, max_depth, min_samples_split, min_samples_leaf, max_features, bootstrap, oob_score, n_jobs):
-    # Деление данных на признаки и целевую переменную
-    X = data.drop(columns=[target_column])
-    y = data[target_column]
+def train_model(
+    # data: pd.DataFrame,
+    # target_column,
+    # test_size,
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    n_estimators,
+    criterion,
+    max_depth,
+    min_samples_split,
+    min_samples_leaf,
+    max_features,
+    bootstrap,
+    oob_score,
+    n_jobs,
+):
+    # # Деление данных на признаки и целевую переменную
+    # X = data.drop(columns=[target_column])
+    # y = data[target_column]
     
-    # Преобразование категориальных данных в числовые
-    X = pd.get_dummies(X)
+    # # Преобразование категориальных данных в числовые
+    # X = pd.get_dummies(X)
 
-    # Разделение данных на обучающую и тестовую выборки
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size)
+    # # Разделение данных на обучающую и тестовую выборки
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size)
     
     if max_features == "None":
         max_features = None
